@@ -14,6 +14,10 @@ A local-first AI research workspace for uploading PDF papers, indexing them with
 - AI mode selector for cloud, hybrid, and private/local operation
 - Built-in PDF viewer for citation inspection
 
+## Technical Report
+
+A detailed technical report describing the architecture, implementation choices, and project workflow is available here: [Technical Report](docs/ai_research_assitant.pdf).
+
 ## Architecture
 
 ```text
