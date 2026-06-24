@@ -1,0 +1,50 @@
+# Environments
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Virtual environments
+.venv/
+backend/.venv/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDEs
+.idea/
+.vscode/
+
+# Local agent/runtime metadata
+.agents/
+.codex/
+
+# Project Data
+data/papers/*
+data/images/*
+!data/papers/.gitkeep
+!data/images/.gitkeep
+
+# Builds
+build/
+dist/
+*.egg-info/
+
+# Logs
+*.log
+
+# OS specific
+.DS_Store
+Thumbs.db

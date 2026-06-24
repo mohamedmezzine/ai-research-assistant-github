@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MEZZINE_AI Research Assistant</title>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Styles -->
+    <link rel="stylesheet" href="styles.css?v=8">
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Markdown Parser -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
+    <!-- MathJax for LaTeX Math Rendering -->
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']],
+                processEscapes: true
+            }
+        };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+<body><div class="ambient-glow glow-1"></div><div class="ambient-glow glow-2"></div><div class="app-container">
+        <!-- Sidebar for Uploads & Sessions -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fa-solid fa-atom logo-icon"></i>
+                    <h2>MEZZINE_<span class="highlight">AI</span></h2>
+                </div>
+                <p class="subtitle">Research Workspace</p>
+                <button id="new-chat-btn" class="new-chat-btn">
+                    <i class="fa-solid fa-plus"></i> New Chat
+                </button>
+            </div>
+
+            <div class="sidebar-sections">
+                <!-- Chat History Section -->
+                <div class="sidebar-section">
+                    <div class="section-header" onclick="toggleSection('sessions-container')">
+                        <h3><i class="fa-regular fa-comments"></i> Chat History</h3>
+                        <i class="fa-solid fa-chevron-down toggle-icon"></i>
+                    </div>
+                    <div id="sessions-container" class="section-content">
+                        <div class="sessions-list" id="sessions-list">
+                            <!-- Sessions will appear here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Knowledge Base Section -->
+                <div class="sidebar-section">
+                    <div class="section-header" onclick="toggleSection('kb-container')">
+                        <h3><i class="fa-solid fa-book-bookmark"></i> Knowledge Base</h3>
+                        <i class="fa-solid fa-chevron-down toggle-icon"></i>
+                    </div>
+                    <div id="kb-container" class="section-content">
+                        <div class="upload-box" id="drop-zone">
+                            <i class="fa-solid fa-cloud-arrow-up"></i>
+                            <p>Drag & drop PDF here</p>
+                            <span>or</span>
+                            <label for="file-upload" class="upload-btn">Browse Files</label>
+                            <input type="file" id="file-upload" accept=".pdf" hidden>
+                        </div>
+                        <div id="upload-status" class="hidden">
+                            <div class="spinner"></div>
+                            <span id="upload-text">Processing paper...</span>
+                        </div>
+                        <div class="papers-list" id="papers-list">
+                            <!-- Uploaded papers will appear here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Chat Interface -->
+        <main class="chat-container">
+            <header class="chat-header">
+                <div class="header-info" style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+                    <div>
+                        <h1 id="current-session-title">Research Chat</h1>
+                        <span class="status-indicator"><span class="dot"></span>Ready</span>
+                    </div>
+                    
+                    <div class="mode-selector-container" style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">AI Mode:</span>
+                        <select id="ai-mode-select" class="mode-badge" style="cursor: pointer; outline: none; padding: 6px 12px; display: none;">
+                            <option value="cloud">Cloud Gemini</option>
+                            <option value="hybrid">Hybrid (Local Index)</option>
+                            <option value="private">Private Local</option>
+                        </select>
+                    </div>
+                </div>
+            </header>
+
+            <div class="chat-messages" id="chat-messages">
+                <div class="message ai-message welcome-message">
+                    <div class="message-avatar">
+                        <i class="fa-solid fa-robot"></i>
+                    </div>
+                    <div class="message-content markdown-body">
+                        <p>Hello! I'm your MEZZINE_AI Research Assistant.</p>
+                        <p>Upload a PDF paper in the sidebar, and then ask me anything about it. Your conversations will be automatically saved into sessions in the sidebar.</p>
+                        <div id="privacy-notice" class="privacy-notice" style="display: none; margin-top: 15px; padding: 10px; border-radius: 6px; font-size: 0.9em; background-color: var(--bg-hover);">
+                            <i class="fa-solid fa-shield-halved" style="color: var(--primary);"></i> <span id="privacy-notice-text"></span>
+                        </div>
+                    </div>
+                </div>
+                <!-- Dynamic messages go here -->
+            </div>
+
+            <div class="chat-bottom-wrapper">
+                <!-- Research Modes -->
+                <div class="research-modes">
+                    <button class="mode-btn" data-mode="summarize" title="Summarize the selected papers"><i class="fa-solid fa-file-lines"></i> Summarize</button>
+                    <button class="mode-btn" data-mode="methodology" title="Extract methodology details"><i class="fa-solid fa-microscope"></i> Methodology</button>
+                    <button class="mode-btn" data-mode="contributions" title="List key contributions"><i class="fa-solid fa-star"></i> Contributions</button>
+                    <button class="mode-btn" data-mode="limitations" title="Identify limitations and future work"><i class="fa-solid fa-triangle-exclamation"></i> Limitations</button>
+                    <button class="mode-btn" data-mode="gap_finder" title="Identify research gaps and suggested future questions"><i class="fa-solid fa-magnifying-glass-chart"></i> Gap Finder</button>
+                    <button class="mode-btn" data-mode="compare" title="Compare multiple selected papers"><i class="fa-solid fa-code-compare"></i> Compare</button>
+                    <button class="mode-btn" data-mode="literature_review" title="Generate a literature review"><i class="fa-solid fa-book-open"></i> Lit Review</button>
+                </div>
+                
+                <div class="chat-input-container">
+                    <form id="chat-form" class="chat-form">
+                        <input type="text" id="chat-input" placeholder="Ask a question about your documents..." autocomplete="off">
+                        <button type="submit" id="send-btn" disabled>
+                            <i class="fa-solid fa-paper-plane"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </main>
+
+        <!-- PDF Viewer Pane -->
+        <div class="pdf-resizer" id="pdf-resizer"></div>
+        <aside class="pdf-pane" id="pdf-pane">
+            <div class="pdf-header">
+                <h3 id="pdf-header-title">Document Viewer</h3>
+                <button onclick="closePdfViewer()" class="close-pdf-btn" title="Close Viewer">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div id="pdf-render-container" class="pdf-render-container">
+                <div class="pdf-empty-state">
+                    <i class="fa-regular fa-file-pdf"></i>
+                    <p>Click a citation chip to view the source document</p>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Scripts (with cache-buster ?v=5 to force browser to load new version) -->
+    
+    <!-- PDF.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="pdf_viewer.js"></script>
+    
+    <script src="app.js?v=11"></script>
+
+    
+    <!-- Simple script for sidebar toggles -->
+    <script>
+        function toggleSection(id) {
+            const content = document.getElementById(id);
+            const header = content.previousElementSibling;
+            const icon = header.querySelector('.toggle-icon');
+            
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.style.transform = 'rotate(0deg)';
+            } else {
+                content.style.display = 'none';
+                icon.style.transform = 'rotate(-90deg)';
+            }
+        }
+    </script>
+</body>
+</html>
+
+
+

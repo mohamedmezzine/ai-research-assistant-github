@@ -1,0 +1,1163 @@
+\documentclass[11pt,a4paper]{report}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{geometry}
+\usepackage{setspace}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, shapes.geometric, fit}
+
+\geometry{margin=1in}
+\onehalfspacing
+\setlength{\parskip}{0.45em}
+\setlength{\parindent}{0pt}
+\emergencystretch=2em
+\sloppy
+
+\definecolor{codebg}{HTML}{F7F7F7}
+\definecolor{codeframe}{HTML}{D9D9D9}
+\definecolor{keywordblue}{HTML}{005A9C}
+\definecolor{commentgray}{HTML}{5A5A5A}
+\definecolor{stringgreen}{HTML}{2E7D32}
+\definecolor{tablegray}{HTML}{F2F2F2}
+\definecolor{accent}{HTML}{0F766E}
+\definecolor{accentlight}{HTML}{ECFDF5}
+\definecolor{warninglight}{HTML}{FFF7ED}
+\definecolor{riskred}{HTML}{991B1B}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=keywordblue,
+    urlcolor=keywordblue,
+    citecolor=keywordblue,
+    pdftitle={AI Research Assistant Technical Architecture Report},
+    pdfauthor={Project Owner},
+    pdfsubject={Software architecture and implementation documentation}
+}
+
+\lstdefinestyle{projectcode}{
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    rulecolor=\color{codeframe},
+    keywordstyle=\color{keywordblue}\bfseries,
+    commentstyle=\color{commentgray}\itshape,
+    stringstyle=\color{stringgreen},
+    showstringspaces=false,
+    tabsize=4,
+    columns=fullflexible,
+    keepspaces=true
+}
+
+\lstset{style=projectcode}
+
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\projectname}{MEZZINE\_AI Research Assistant}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{MEZZINE\_AI Research Assistant}
+\rhead{Technical Report}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\titleformat{\chapter}[display]
+  {\normalfont\huge\bfseries\color{accent}}
+  {\chaptertitlename\ \thechapter}{12pt}{\Huge}
+\titleformat{\section}
+  {\normalfont\Large\bfseries\color{keywordblue}}
+  {\thesection}{0.8em}{}
+\titleformat{\subsection}
+  {\normalfont\large\bfseries\color{accent}}
+  {\thesubsection}{0.8em}{}
+
+\newcommand{\reviewbox}[2]{%
+\begin{center}
+\fcolorbox{accent}{accentlight}{%
+\begin{minipage}{0.92\textwidth}
+\textbf{#1}\par
+#2
+\end{minipage}}
+\end{center}}
+
+\newcommand{\riskbox}[2]{%
+\begin{center}
+\fcolorbox{riskred}{warninglight}{%
+\begin{minipage}{0.92\textwidth}
+\textbf{#1}\par
+#2
+\end{minipage}}
+\end{center}}
+
+\begin{document}
+
+\begin{titlepage}
+    \centering
+    \vspace*{1.5cm}
+    {\color{accent}\rule{\textwidth}{1.2pt}\par\vspace{0.8cm}{\Huge\bfseries \projectname\par}\vspace{0.4cm}\rule{0.55\textwidth}{0.8pt}}
+    \vspace{0.5cm}
+    {\Large Technical Architecture and Implementation Report\par}
+    \vspace{1.5cm}
+    {\large Project type: AI-powered research-paper assistant with RAG, multimodal ingestion, and local/cloud AI modes\par}
+    \vfill
+    \begin{tabular}{rl}
+        Author: & Project Owner / Maintainer \\
+        Prepared by: & Senior Software Engineering Review \\
+        Version: & 1.0 \\
+        Date: & June 24, 2026 \\
+        Repository: & \code{ai-research-assistant}
+    \end{tabular}
+    \vfill
+    {\large Generated from direct source-code analysis of the local project workspace.\par}
+\end{titlepage}
+
+\pagenumbering{roman}
+\tableofcontents
+\listoffigures
+\listoftables
+\newpage
+\pagenumbering{arabic}
+
+\chapter{Executive Summary}
+
+\projectname{} is a full-stack AI research workspace that lets a user upload PDF papers, index their textual and visual content, and ask grounded questions over the uploaded knowledge base. The project implements a retrieval-augmented generation (RAG) pipeline using a FastAPI backend, PostgreSQL with pgvector, and a static browser frontend. It supports a cloud mode using Gemini, a hybrid mode using local embeddings with cloud chat generation, and a private mode designed around local embeddings and Ollama chat generation.
+
+The system is best described as a modular monolith with a layered architecture. The frontend is a static single-page application (SPA), while the backend provides REST endpoints, streaming chat responses over newline-delimited JSON (NDJSON), database access, PDF ingestion, embedding generation, retrieval, prompt construction, and LLM provider selection.
+
+\reviewbox{At-a-glance Architecture Profile}{Pattern: layered modular monolith. Primary workflow: upload PDF -> extract text/images -> chunk -> embed -> store vectors -> retrieve context -> generate grounded answer. Runtime modes: cloud, hybrid, and private. Main storage boundary: PostgreSQL with pgvector plus local paper/image files.}
+
+The current implementation is a capable MVP for personal or local research assistance. Its strongest elements are the separation between API routers, RAG modules, LLM providers, prompts, and CRUD utilities; its support for streaming responses; and its multimodal indexing path for extracted PDF images. The main production-readiness gaps are missing dependencies in \code{requirements.txt}, no authentication, permissive CORS, no upload size limit, a debug ingestion endpoint, global mutable AI mode state, and several frontend/backend contract mismatches that can break AI-mode loading and PDF citation viewing.
+
+\newpage
+\chapter{Introduction}
+
+\section{Context}
+
+Researchers often accumulate a collection of papers and need to query, compare, summarize, and synthesize them quickly. A RAG system is a practical architecture for this task: documents are chunked and embedded into a vector store; user questions are embedded; similar chunks are retrieved; and an LLM answers using the retrieved context.
+
+This project applies that pattern to PDF research papers. It combines a web UI for upload and chat with backend services for ingestion, vector search, and LLM interaction. It also introduces privacy-oriented execution modes, allowing the user to choose how much document content is processed locally or sent to a cloud model.
+
+\section{Motivation}
+
+The project appears designed as a portfolio-quality AI engineering MVP. It demonstrates:
+
+\begin{itemize}[leftmargin=*]
+    \item RAG architecture with PostgreSQL and pgvector.
+    \item FastAPI routing and request/response models.
+    \item LLM provider abstraction across Gemini and Ollama.
+    \item Local embedding support through SentenceTransformers.
+    \item Streaming chat responses to a browser client.
+    \item Session persistence and citation-based source traceability.
+    \item A privacy-mode design that distinguishes cloud, hybrid, and local operation.
+\end{itemize}
+
+\section{Objectives}
+
+The implemented system aims to:
+
+\begin{itemize}[leftmargin=*]
+    \item Accept PDF uploads from a browser UI.
+    \item Extract text and images from each PDF page.
+    \item Convert text and image descriptions into searchable vector chunks.
+    \item Retrieve relevant chunks for user questions or research-analysis modes.
+    \item Generate answers grounded only in retrieved sources.
+    \item Persist chat sessions and message history.
+    \item Display citations and allow source inspection in an embedded PDF viewer.
+\end{itemize}
+
+\section{Scope}
+
+This report documents the source tree present in the analyzed workspace. It covers the backend, frontend, database schema, configuration, data flow, public API, feature set, known issues, and setup process. It does not claim that roadmap or proposal items are fully implemented unless corresponding source code exists.
+
+\newpage
+\chapter{Technical Stack}
+
+\section{Technology Inventory}
+
+\begin{longtable}{p{0.22\textwidth} p{0.18\textwidth} p{0.22\textwidth} p{0.28\textwidth}}
+\caption{Primary technologies and their roles}
+\label{tab:tech-stack}\\
+\toprule
+\textbf{Technology} & \textbf{Version / Source} & \textbf{Role} & \textbf{Reason inferred from usage} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Technology} & \textbf{Version / Source} & \textbf{Role} & \textbf{Reason inferred from usage} \\
+\midrule
+\endhead
+Python & Not pinned & Backend language & FastAPI, PDF extraction, database access, and AI provider orchestration are implemented in Python. \\
+FastAPI & 0.110.0 & Web API framework & Provides typed REST routes, request validation, file uploads, background tasks, and OpenAPI docs. \\
+Uvicorn & 0.27.1 & ASGI server & Runs the FastAPI application during development and deployment. \\
+Pydantic & 2.6.3 & Data validation & Defines request models such as chat requests and session title updates. \\
+Pydantic Settings & 2.2.1 & Configuration & Loads environment variables and defaults through a single \code{Settings} object. \\
+PostgreSQL & 16 via Docker image & Relational database & Stores papers, chunks, sessions, and chat logs. \\
+pgvector & \code{pgvector/pgvector:pg16} & Vector search extension & Stores and compares embedding vectors using cosine distance. \\
+psycopg & 3.1.18 & PostgreSQL client & Executes SQL queries and transactions from Python. \\
+psycopg-pool & Missing from requirements & Connection pooling & Imported by \code{app/db.py}; should be pinned for clean installs. \\
+Google GenAI SDK & 0.3.0 & Gemini API client & Generates cloud embeddings, text answers, and cloud image descriptions. \\
+Gemini & Configured model names & Cloud LLM and embeddings & Default cloud provider for chat and embeddings. \\
+Ollama & Local HTTP API & Local chat provider & Used for private-mode text generation and Moondream image description. \\
+SentenceTransformers & Optional, commented out & Local embeddings & Intended to generate local 768-dimensional embeddings. The import is currently eager. \\
+PyTorch & Optional, commented out & Local model runtime & Used by SentenceTransformers and GPU/CPU device selection. \\
+PyMuPDF & 1.23.26 & PDF parsing & Extracts page text and embedded images. \\
+Pillow & 10.2.0 & Image loading & Sends extracted images to Gemini content generation. \\
+HTTPX & 0.27.0 & HTTP client & Calls Ollama and test upload endpoints. \\
+HTML/CSS/JavaScript & Browser native & Frontend SPA & Implements upload, chat, sessions, citations, and PDF viewer behavior without a build step. \\
+marked & CDN latest URL & Markdown rendering & Renders LLM output in the chat interface. \\
+MathJax & Version 3 CDN & Math rendering & Displays LaTeX-style math in generated answers. \\
+PDF.js & 3.11.174 CDN & Browser PDF viewer & Renders cited pages and highlights source snippets. \\
+Font Awesome & 6.4.0 CDN & Icons & Provides icons for UI controls and document markers. \\
+Docker Compose & Compose file & Local infrastructure & Starts PostgreSQL with pgvector and schema initialization. \\
+\bottomrule
+\end{longtable}
+
+\section{Dependency Gaps}
+
+The dependency file is close to the implemented stack, but a clean environment will likely fail without additional packages:
+
+\begin{itemize}[leftmargin=*]
+    \item \code{psycopg-pool} is required because \code{app/db.py} imports \code{ConnectionPool}.
+    \item \code{python-multipart} is required by FastAPI file upload handling through \code{UploadFile} and \code{File}.
+    \item \code{sentence-transformers} and \code{torch} are commented out as optional, but \code{app/llm/factory.py} imports \code{LocalEmbeddingProvider} eagerly, which imports both modules at import time.
+    \item \code{pdfplumber} is imported by \code{backend/test_pdf.py}, but that file is an ad hoc script rather than application code.
+\end{itemize}
+
+\newpage
+\chapter{System Architecture}
+
+\section{Architectural Pattern}
+
+The project follows a layered modular monolith architecture:
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Presentation layer}: static frontend files in \code{frontend/}.
+    \item \textbf{API layer}: FastAPI routers in \code{backend/app/api/}.
+    \item \textbf{Application logic layer}: RAG ingestion, retrieval, prompts, provider selection, and session logic.
+    \item \textbf{Provider layer}: Gemini, Ollama, and SentenceTransformers abstractions under \code{backend/app/llm/}.
+    \item \textbf{Persistence layer}: PostgreSQL tables and pgvector columns accessed through \code{psycopg}.
+    \item \textbf{Infrastructure layer}: Docker Compose starts the database and loads \code{backend/init.sql}.
+\end{itemize}
+
+It is not a microservice architecture. The backend is one FastAPI process with internally separated modules. The database is the only separate runtime service defined by the project.
+
+\section{Component Diagram}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    node distance=1.3cm and 1.8cm,
+    box/.style={draw, rounded corners, align=center, minimum width=3.0cm, minimum height=1.0cm, fill=white},
+    data/.style={draw, cylinder, shape border rotate=90, aspect=0.25, align=center, minimum height=1.2cm, minimum width=1.7cm, fill=white},
+    arrow/.style={-{Latex[length=2mm]}, thick}
+]
+\node[box] (browser) {Static SPA\\\code{frontend/}};
+\node[box, right=of browser] (api) {FastAPI App\\\code{app/main.py}};
+\node[box, below=of api] (routers) {API Routers\\papers, sessions, chat};
+\node[box, below left=of routers] (rag) {RAG Pipeline\\PDF, chunks, retrieval};
+\node[box, below right=of routers] (llm) {LLM Providers\\Gemini, Ollama, local embeddings};
+\node[data, below=of rag] (db) {PostgreSQL\\pgvector};
+\node[box, left=of rag] (files) {Local files\\PDFs and images};
+\node[box, right=of llm] (external) {External/Local AI\\Gemini API, Ollama};
+
+\draw[arrow] (browser) -- node[above]{REST, NDJSON stream} (api);
+\draw[arrow] (api) -- (routers);
+\draw[arrow] (routers) -- (rag);
+\draw[arrow] (routers) -- (llm);
+\draw[arrow] (rag) -- (db);
+\draw[arrow] (rag) -- (files);
+\draw[arrow] (llm) -- (external);
+\draw[arrow] (rag) -- node[below]{embedding requests} (llm);
+\draw[arrow] (db) -- node[left]{chunks, sessions} (rag);
+\end{tikzpicture}
+\caption{High-level system architecture}
+\label{fig:architecture}
+\end{figure}
+
+\section{Main Data Flow}
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    node distance=0.85cm,
+    step/.style={draw, rounded corners, align=center, minimum width=3.5cm, minimum height=0.8cm, fill=accentlight},
+    io/.style={draw, rounded corners, align=center, minimum width=3.5cm, minimum height=0.8cm, fill=white},
+    arrow/.style={-{Latex[length=2mm]}, thick}
+]
+\node[io] (upload) {PDF upload};
+\node[step, below=of upload] (record) {Create/reuse paper record};
+\node[step, below=of record] (extract) {PyMuPDF extracts text and images};
+\node[step, below=of extract] (caption) {Vision provider captions extracted images};
+\node[step, below=of caption] (chunk) {Text and image descriptions become chunks};
+\node[step, below=of chunk] (embed) {Mode-aware embedding provider};
+\node[io, below=of embed] (store) {PostgreSQL chunks + pgvector columns};
+\draw[arrow] (upload) -- (record);
+\draw[arrow] (record) -- (extract);
+\draw[arrow] (extract) -- (caption);
+\draw[arrow] (caption) -- (chunk);
+\draw[arrow] (chunk) -- (embed);
+\draw[arrow] (embed) -- (store);
+\end{tikzpicture}
+\caption{Detailed ingestion pipeline}
+\label{fig:ingestion-pipeline}
+\end{figure}
+
+\subsection{PDF Upload and Ingestion}
+
+\begin{enumerate}[leftmargin=*]
+    \item The user uploads a PDF through the frontend drop zone or file picker.
+    \item The frontend sends \code{POST /papers/upload} with multipart form data.
+    \item The backend checks the file extension, saves the PDF into \code{data/papers/}, and creates or reuses a paper record.
+    \item A FastAPI background task runs \code{ingest_pdf()}.
+    \item \code{extract_pdf_pages()} uses PyMuPDF to extract page text and embedded images.
+    \item Text is chunked by \code{chunk_text()} using paragraph-first, sentence-fallback logic with overlap.
+    \item Extracted images are described through \code{generate_image_description()} and indexed as image-description chunks.
+    \item The selected embedding provider embeds each chunk.
+    \item Chunks and vectors are inserted into PostgreSQL.
+\end{enumerate}
+
+\subsection{Question Answering}
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    node distance=1.0cm and 1.2cm,
+    actor/.style={draw, rounded corners, align=center, minimum width=2.4cm, minimum height=0.8cm, fill=white},
+    action/.style={draw, rounded corners, align=center, minimum width=2.7cm, minimum height=0.8cm, fill=accentlight},
+    arrow/.style={-{Latex[length=2mm]}, thick}
+]
+\node[actor] (ui) {Browser UI};
+\node[action, right=of ui] (route) {POST /chat/stream};
+\node[action, right=of route] (retrieval) {Embed query + vector search};
+\node[action, below=of retrieval] (prompt) {Prompt builder + history};
+\node[action, left=of prompt] (provider) {Gemini or Ollama};
+\node[actor, left=of provider] (render) {Markdown, math, citations};
+\draw[arrow] (ui) -- (route);
+\draw[arrow] (route) -- (retrieval);
+\draw[arrow] (retrieval) -- (prompt);
+\draw[arrow] (prompt) -- (provider);
+\draw[arrow] (provider) -- node[below]{NDJSON tokens} (render);
+\draw[arrow] (render) -- node[left]{user sees answer} (ui);
+\end{tikzpicture}
+\caption{Streaming chat sequence}
+\label{fig:chat-sequence}
+\end{figure}
+
+\begin{enumerate}[leftmargin=*]
+    \item The user asks a question or triggers a research mode.
+    \item The frontend sends \code{POST /chat/stream} with session ID, question, selected paper IDs, and mode.
+    \item The backend embeds the question with the active embedding provider.
+    \item \code{retrieve_context()} searches the active vector column using pgvector cosine distance.
+    \item The prompt builder formats the question, retrieved chunks, mode instructions, and recent chat history.
+    \item The active chat provider generates an answer through Gemini or Ollama.
+    \item The streaming endpoint emits a source event followed by token events as NDJSON.
+    \item The frontend renders Markdown incrementally, displays citation chips, and saves the exchange through the backend.
+\end{enumerate}
+
+\section{Module Dependencies}
+
+\begin{itemize}[leftmargin=*]
+    \item \code{app/main.py} configures the FastAPI app, CORS, migrations, routers, static mounts, mode endpoints, and frontend serving.
+    \item \code{app/api/papers.py} depends on \code{app.rag.ingest}, \code{app.crud_papers}, \code{app.db}, and configuration.
+    \item \code{app/api/chat.py} depends on retrieval, session history, and chat provider selection.
+    \item \code{app/rag/ingest.py} depends on PDF loading, chunking, embeddings, image description, and database access.
+    \item \code{app/rag/retrieval.py} depends on the embedding provider, active settings, and pgvector SQL.
+    \item \code{app/llm/factory.py} maps runtime mode settings to concrete provider classes.
+    \item \code{app/crud_sessions.py} and \code{app/crud_papers.py} isolate most direct persistence operations.
+\end{itemize}
+
+\newpage
+\chapter{Project Structure}
+
+\section{Annotated Directory Tree}
+
+\begin{lstlisting}[caption={Project directory tree}, label={lst:tree}]
+ai-research-assistant/
+  .env.example                  Environment template with GEMINI_API_KEY placeholder
+  .gitignore                    Ignores secrets, virtualenvs, caches, IDE files, and data
+  docker-compose.yml            PostgreSQL + pgvector service
+  README.md                     Setup notes, partially stale OpenAI references
+  privacy_mode_local_llm_feature.md
+                                Local/private AI mode design specification
+  PROJECT_CRITIC_REVIEW.md      Local review document with known issues
+  docs/
+    architecture.md             Short architecture sketch
+    project_report.tex          This generated technical report
+  backend/
+    requirements.txt            Backend dependencies
+    init.sql                    Initial pgvector schema
+    test_*.py                   Ad hoc diagnostic scripts
+    app/
+      main.py                   FastAPI app, routers, static mounts, settings endpoints
+      db.py                     Connection pool, transaction helper, startup migrations
+      crud_papers.py            Paper listing and deletion
+      crud_sessions.py          Session CRUD and chat log persistence
+      api/
+        __init__.py
+        papers.py               Paper upload/list/delete routes
+        sessions.py             Session CRUD and chat history routes
+        chat.py                 Chat and streaming chat routes
+      core/
+        config.py               Pydantic settings
+      llm/
+        base.py                 Provider interfaces
+        factory.py              Mode-aware provider factory
+        gemini_provider.py      Gemini embeddings and chat generation
+        ollama_provider.py      Ollama local chat generation
+        local_embeddings.py     SentenceTransformers embedding provider
+        prompts.py              Mode-specific prompt templates
+        vision.py               Image description through Gemini or Moondream
+      rag/
+        pdf_loader.py           PyMuPDF text and image extraction
+        chunker.py              Paragraph/sentence-aware text chunking
+        ingest.py               PDF ingestion, image captioning, embedding, insert
+        retrieval.py            Vector search and context assembly
+  frontend/
+    index.html                  Static SPA layout
+    styles.css                  Dark UI styling
+    app.js                      Upload, sessions, chat, mode switching, citations
+    pdf_viewer.js               PDF.js rendering and snippet highlighting
+    README.md                   Placeholder frontend note
+    test.txt                    Residual test file
+  data/
+    papers/                     Uploaded PDFs, ignored by git
+    images/                     Extracted PDF images, ignored by git
+\end{lstlisting}
+
+\section{Entry Points}
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Backend application}: \code{backend/app/main.py}, run with \code{uvicorn app.main:app --reload} from the \code{backend/} directory.
+    \item \textbf{Frontend application}: \code{frontend/index.html}, served by FastAPI at \code{GET /} and by the static mount at the root path.
+    \item \textbf{Database initialization}: \code{backend/init.sql}, mounted into the PostgreSQL container by Docker Compose.
+    \item \textbf{Infrastructure}: \code{docker-compose.yml}, defining the \code{pgvector/pgvector:pg16} database service on host port \code{5433}.
+\end{itemize}
+
+\newpage
+\chapter{Features and Functionalities}
+
+\section{PDF Upload}
+
+\textbf{Files}: \code{frontend/app.js}, \code{backend/app/api/papers.py}, \code{backend/app/rag/ingest.py}
+
+The frontend supports drag-and-drop and file-picker upload. The backend endpoint \code{POST /papers/upload} accepts a multipart file and rejects filenames that do not end in \code{.pdf}. The file is saved to \code{settings.upload_dir}, a paper record is created or reused by title, and ingestion is scheduled with FastAPI \code{BackgroundTasks}. The endpoint returns immediately with a paper ID and title.
+
+Internally, this keeps the request path responsive while the heavier PDF parsing and embedding work runs after the response. The implementation currently reads the whole upload into memory with \code{await file.read()}, which is simple but risky for large PDFs.
+
+\section{Paper Knowledge Base Management}
+
+\textbf{Files}: \code{frontend/app.js}, \code{backend/app/api/papers.py}, \code{backend/app/crud_papers.py}
+
+The frontend lists uploaded papers with checkboxes and delete icons. The backend exposes:
+
+\begin{itemize}[leftmargin=*]
+    \item \code{GET /papers} to list papers for the active knowledge-base mode.
+    \item \code{DELETE /papers/{paper_id}} to delete a paper and cascade associated chunks.
+\end{itemize}
+
+The list operation filters papers by \code{papers.ai_mode}. In the current upload implementation, however, new papers are inserted without setting \code{ai_mode}; the database default is \code{local}. This creates a mode-consistency bug for cloud uploads.
+
+\section{PDF Text and Image Extraction}
+
+\textbf{Files}: \code{backend/app/rag/pdf_loader.py}, \code{backend/app/llm/vision.py}
+
+\code{extract_pdf_pages()} opens the PDF with PyMuPDF, extracts text from each page, and iterates over embedded images. Images smaller than 5000 bytes are ignored to skip tiny decorative artifacts. Larger images are stored under \code{data/images/} with a filename containing the paper stem, page number, image index, and a short UUID.
+
+During ingestion, each stored image is sent to \code{generate_image_description()}. Private mode uses the Ollama \code{moondream} model with base64 image input; other modes use Gemini vision. The generated description becomes a textual chunk with an \code{[IMAGE]} prefix and retains the image path for citation rendering.
+
+\section{Semantic Text Chunking}
+
+\textbf{Files}: \code{backend/app/rag/chunker.py}
+
+The chunker splits text first by paragraph boundaries, then by sentence boundaries for oversized paragraphs, and finally by fixed-size windows when a single sentence exceeds the maximum chunk size. The defaults are \code{max_chunk_size = 1500} characters and \code{overlap = 200} characters.
+
+This is an MVP-level semantic chunker. It improves over naive fixed slicing by respecting paragraphs and sentences where possible, but it is still character-based rather than token-based and does not handle table structure, equations, or multi-column reading order.
+
+\section{Embedding Generation}
+
+\textbf{Files}: \code{backend/app/llm/base.py}, \code{backend/app/llm/factory.py}, \code{backend/app/llm/gemini_provider.py}, \code{backend/app/llm/local_embeddings.py}
+
+Embedding providers implement the \code{EmbeddingProvider} interface. The factory chooses providers based on \code{settings.ai_mode}:
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Cloud mode}: Gemini embeddings.
+    \item \textbf{Hybrid mode}: local SentenceTransformers embeddings.
+    \item \textbf{Private mode}: local SentenceTransformers embeddings.
+\end{itemize}
+
+Ingestion stores cloud-mode embeddings in \code{chunks.embedding_cloud} and local/private/hybrid embeddings in \code{chunks.embedding_local}. The local column is fixed at 768 dimensions in the schema, matching the configured \code{sentence-transformers/all-mpnet-base-v2} model.
+
+\section{Vector Retrieval}
+
+\textbf{Files}: \code{backend/app/rag/retrieval.py}, \code{backend/init.sql}
+
+\code{retrieve_context()} embeds the user query, chooses the active vector column, and runs a pgvector cosine-similarity query. It computes:
+
+\begin{lstlisting}[language=SQL, caption={Similarity expression used for retrieval}]
+1 - (chunks.embedding_local <=> %s::vector) AS similarity
+\end{lstlisting}
+
+The query filters out rows with similarity at or below \code{0.05}, orders by similarity descending, and limits results by \code{top_k}. If paper IDs are provided, it restricts retrieval to those selected papers.
+
+\section{Grounded Chat}
+
+\textbf{Files}: \code{backend/app/api/chat.py}, \code{backend/app/llm/prompts.py}, \code{backend/app/llm/gemini_provider.py}, \code{backend/app/llm/ollama_provider.py}
+
+The standard chat endpoint takes a question, retrieves source chunks, builds an academic prompt, and asks the selected chat provider to answer only using retrieved sources. The prompt requires inline citation formatting such as \code{(Source X, page Y)}.
+
+The backend also adds recent session history for ordinary chat mode. It fetches the last five messages and truncates assistant messages longer than 500 characters, limiting context growth.
+
+\section{Streaming Chat}
+
+\textbf{Files}: \code{backend/app/api/chat.py}, \code{frontend/app.js}
+
+\code{POST /chat/stream} returns a \code{StreamingResponse} with media type \code{application/x-ndjson}. The stream first yields a sources object, then emits token objects:
+
+\begin{lstlisting}[caption={Streaming response event shapes}]
+{"type": "sources", "data": [...]}
+{"type": "token", "data": "partial answer text"}
+\end{lstlisting}
+
+The frontend reads the stream through \code{ReadableStream.getReader()}, parses newline-delimited JSON, renders partial Markdown using \code{marked}, and appends citation chips once sources arrive.
+
+\section{Research Modes}
+
+\textbf{Files}: \code{frontend/index.html}, \code{frontend/app.js}, \code{backend/app/llm/prompts.py}
+
+The UI exposes seven research-mode buttons:
+
+\begin{itemize}[leftmargin=*]
+    \item Summarize
+    \item Methodology
+    \item Contributions
+    \item Limitations
+    \item Gap Finder
+    \item Compare
+    \item Literature Review
+\end{itemize}
+
+When a mode is selected without a question, the backend substitutes a broad retrieval query and increases \code{top_k} to 10. The prompt module then applies the corresponding task-specific instructions.
+
+\section{Session Management}
+
+\textbf{Files}: \code{frontend/app.js}, \code{backend/app/api/sessions.py}, \code{backend/app/crud_sessions.py}
+
+The project supports persistent chat sessions:
+
+\begin{itemize}[leftmargin=*]
+    \item \code{GET /sessions} lists sessions.
+    \item \code{POST /sessions} creates a new session titled \code{New Chat}.
+    \item \code{GET /sessions/{session_id}/chat} returns ordered chat history.
+    \item \code{PUT /sessions/{session_id}} updates the title.
+    \item \code{DELETE /sessions/{session_id}} deletes the session and cascades chat logs.
+\end{itemize}
+
+After a user asks the first real question, the backend updates the title to the first 50 characters of the question.
+
+\section{AI Mode Selection}
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    mode/.style={draw, rounded corners, align=center, minimum width=3.1cm, minimum height=1.0cm, fill=accentlight},
+    provider/.style={draw, rounded corners, align=center, minimum width=3.1cm, minimum height=1.0cm, fill=white},
+    arrow/.style={-{Latex[length=2mm]}, thick}
+]
+\node[mode] (cloud) {Cloud\Gemini chat\Gemini embeddings};
+\node[mode, right=1.0cm of cloud] (hybrid) {Hybrid\Gemini chat\Local embeddings};
+\node[mode, right=1.0cm of hybrid] (private) {Private\Ollama chat\Local embeddings};
+\node[provider, below=1.0cm of cloud] (dbcloud) {embedding\_cloud};
+\node[provider, below=1.0cm of hybrid] (dblocal1) {embedding\_local};
+\node[provider, below=1.0cm of private] (dblocal2) {embedding\_local};
+\draw[arrow] (cloud) -- (dbcloud);
+\draw[arrow] (hybrid) -- (dblocal1);
+\draw[arrow] (private) -- (dblocal2);
+\end{tikzpicture}
+\caption{AI mode provider map}
+\label{fig:mode-map}
+\end{figure}
+
+\textbf{Files}: \code{backend/app/main.py}, \code{frontend/app.js}, \code{backend/app/llm/factory.py}
+
+The backend exposes runtime AI mode endpoints:
+
+\begin{itemize}[leftmargin=*]
+    \item \code{GET /settings/ai-mode}
+    \item \code{PUT /settings/ai-mode}
+\end{itemize}
+
+Valid modes are \code{cloud}, \code{hybrid}, and \code{private}. The provider factory uses the active mode to decide which chat and embedding implementations to instantiate.
+
+The current implementation mutates the process-global settings object. This is acceptable for a single-user local prototype but not safe for concurrent users or background ingestion jobs. There is also a frontend contract bug: the backend returns \code{\{"mode": "..."\}}, while the frontend reads \code{settings.ai_mode}.
+
+\section{Citations and PDF Viewer}
+
+\textbf{Files}: \code{frontend/app.js}, \code{frontend/pdf_viewer.js}, \code{backend/app/main.py}
+
+Answers include citations derived from retrieved chunks. The frontend renders each source as a chip containing paper title, page number, similarity tooltip, and optionally an image thumbnail. Clicking a citation opens the PDF viewer pane implemented with PDF.js.
+
+The viewer loads a PDF from \code{/files/papers/{filename}}, renders the cited page, extracts text positions, and highlights the closest text item matching the source snippet. The design is useful, but the current citation payload uses \code{paper_title} rather than the stored file path or filename. Since upload titles are title-cased stems without the \code{.pdf} suffix, many PDF viewer links will fail.
+
+\newpage
+\chapter{Data Models and Database Design}
+
+\section{Schema Overview}
+
+The database schema is defined in \code{backend/init.sql}. Startup migrations in \code{app/db.py} add session, multimodal, and mode-related columns if they are missing.
+
+\begin{longtable}{p{0.18\textwidth} p{0.24\textwidth} p{0.48\textwidth}}
+\caption{Database entities}
+\label{tab:data-models}\\
+\toprule
+\textbf{Table} & \textbf{Primary columns} & \textbf{Purpose} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Table} & \textbf{Primary columns} & \textbf{Purpose} \\
+\midrule
+\endhead
+\code{papers} & \code{id}, \code{title}, \code{file_path}, \code{ai_mode}, \code{created_at} & Stores uploaded document metadata and the local filesystem path. \\
+\code{chunks} & \code{id}, \code{paper_id}, \code{page_number}, \code{content}, \code{image_path}, \code{embedding_cloud}, \code{embedding_local}, \code{created_at} & Stores text chunks and image-description chunks with mode-specific embeddings. \\
+\code{sessions} & \code{id}, \code{title}, \code{created_at}, \code{updated_at} & Stores chat conversation containers. \\
+\code{chat_logs} & \code{id}, \code{session_id}, \code{role}, \code{content}, \code{sources}, \code{model_used}, \code{created_at} & Stores user and assistant messages plus assistant source metadata. \\
+\bottomrule
+\end{longtable}
+
+\section{Relationships}
+
+\begin{itemize}[leftmargin=*]
+    \item \code{papers.id} has a one-to-many relationship with \code{chunks.paper_id}.
+    \item \code{chunks.paper_id} uses \code{ON DELETE CASCADE}, so deleting a paper deletes its chunks.
+    \item \code{sessions.id} has a one-to-many relationship with \code{chat_logs.session_id}.
+    \item \code{chat_logs.session_id} uses \code{ON DELETE CASCADE}, so deleting a session deletes its messages.
+\end{itemize}
+
+\section{Vector Storage}
+
+The schema separates cloud and local embeddings:
+
+\begin{itemize}[leftmargin=*]
+    \item \code{embedding_cloud vector}: no fixed dimension, allowing flexibility for cloud embedding dimensions but preventing a normal fixed-dimension ivfflat index.
+    \item \code{embedding_local vector(768)}: fixed dimension for \code{all-mpnet-base-v2}, indexed with ivfflat cosine operations.
+\end{itemize}
+
+This design avoids mixing incompatible embedding dimensions in one column. The tradeoff is that cloud retrieval may rely on sequential vector search unless a dimension-specific cloud column or index is introduced.
+
+\section{ER-Style Summary}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    entity/.style={draw, rounded corners, align=left, minimum width=4.1cm, fill=white},
+    rel/.style={-{Latex[length=2mm]}, thick}
+]
+\node[entity] (papers) {\textbf{papers}\\id PK\\title\\file\_path\\ai\_mode};
+\node[entity, right=3.0cm of papers] (chunks) {\textbf{chunks}\\id PK\\paper\_id FK\\page\_number\\content\\embedding\_*};
+\node[entity, below=2.0cm of papers] (sessions) {\textbf{sessions}\\id PK\\title\\created\_at\\updated\_at};
+\node[entity, right=3.0cm of sessions] (logs) {\textbf{chat\_logs}\\id PK\\session\_id FK\\role\\content\\sources};
+
+\draw[rel] (papers) -- node[above]{1 to many} (chunks);
+\draw[rel] (sessions) -- node[above]{1 to many} (logs);
+\end{tikzpicture}
+\caption{Database entity relationships}
+\label{fig:er}
+\end{figure}
+
+\newpage
+\chapter{API Reference}
+
+\section{Endpoint Table}
+
+\begin{longtable}{p{0.12\textwidth} p{0.26\textwidth} p{0.38\textwidth} p{0.14\textwidth}}
+\caption{Public backend endpoints}
+\label{tab:api}\\
+\toprule
+\textbf{Method} & \textbf{Route} & \textbf{Purpose} & \textbf{Auth} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Method} & \textbf{Route} & \textbf{Purpose} & \textbf{Auth} \\
+\midrule
+\endhead
+GET & \code{/} & Serves \code{frontend/index.html} if available. & No \\
+GET & \code{/settings/ai-mode} & Returns the current AI mode. Response key is currently \code{mode}. & No \\
+PUT & \code{/settings/ai-mode} & Updates global AI mode to \code{cloud}, \code{hybrid}, or \code{private}. & No \\
+GET & \code{/papers} & Lists papers for the active knowledge-base mode. & No \\
+POST & \code{/papers/upload} & Uploads a PDF and starts background ingestion. & No \\
+DELETE & \code{/papers/{paper_id}} & Deletes a paper and associated chunks. & No \\
+GET & \code{/sessions} & Lists chat sessions. & No \\
+POST & \code{/sessions} & Creates a new chat session. & No \\
+GET & \code{/sessions/{session_id}/chat} & Returns chat history for a session. & No \\
+PUT & \code{/sessions/{session_id}} & Updates a session title. & No \\
+DELETE & \code{/sessions/{session_id}} & Deletes a session and associated chat logs. & No \\
+POST & \code{/chat} & Performs non-streaming RAG answer generation. & No \\
+POST & \code{/chat/stream} & Streams sources and answer tokens as NDJSON. & No \\
+GET & \code{/files/papers/{path}} & Serves uploaded PDFs from the paper directory. & No \\
+GET & \code{/images/{path}} & Serves extracted images. & No \\
+GET & \code{/test-ingest} & Debug endpoint that ingests the latest PDF and returns tracebacks on failure. & No \\
+\bottomrule
+\end{longtable}
+
+\section{Main Request and Response Shapes}
+
+\subsection{Chat Request}
+
+\begin{lstlisting}[language=Python, caption={ChatRequest model}]
+class ChatRequest(BaseModel):
+    session_id: int
+    question: Optional[str] = None
+    top_k: int = 5
+    paper_ids: Optional[List[int]] = None
+    mode: str = "chat"
+\end{lstlisting}
+
+\subsection{Paper Response}
+
+\begin{lstlisting}[language=Python, caption={PaperResponse model}]
+class PaperResponse(BaseModel):
+    id: int
+    title: str
+    created_at: str
+\end{lstlisting}
+
+\subsection{Streaming Response Events}
+
+\begin{lstlisting}[caption={NDJSON streaming payloads}]
+{"type": "sources", "data": [
+  {
+    "paper_title": "Example Paper",
+    "page_number": 3,
+    "similarity": 0.8123,
+    "content": "Retrieved source text",
+    "image_path": null
+  }
+]}
+{"type": "token", "data": "The answer begins..."}
+\end{lstlisting}
+
+\newpage
+\chapter{Key Algorithms and Business Logic}
+
+\section{Mode-Aware Provider Selection}
+
+The factory module centralizes how runtime AI mode maps to provider implementations.
+
+\begin{lstlisting}[language=Python, caption={Provider selection logic}]
+def get_chat_provider() -> ChatProvider:
+    mode = settings.ai_mode.lower()
+
+    if mode == "private":
+        provider_name = settings.local_chat_provider
+    elif mode == "hybrid":
+        provider_name = settings.cloud_chat_provider
+    else:
+        provider_name = settings.cloud_chat_provider
+
+    provider_class = _chat_providers.get(provider_name, GeminiChatProvider)
+    return provider_class()
+\end{lstlisting}
+
+Business meaning:
+
+\begin{itemize}[leftmargin=*]
+    \item Cloud mode sends embeddings and final answer generation to Gemini.
+    \item Hybrid mode indexes locally but still sends retrieved chunks to Gemini for answer generation.
+    \item Private mode keeps both embeddings and chat generation local, assuming local dependencies and Ollama are installed.
+\end{itemize}
+
+\section{Text Chunking}
+
+\begin{lstlisting}[language=Python, caption={Paragraph-first chunking strategy}]
+paragraphs = re.split(r'\n\s*\n', text)
+
+for para in paragraphs:
+    para = para.strip()
+    if not para:
+        continue
+
+    if len(current_chunk) + len(para) + 2 <= max_chunk_size:
+        current_chunk += para + "\n\n"
+    else:
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+            overlap_text = current_chunk[-overlap:]
+            current_chunk = overlap_text + "\n\n"
+\end{lstlisting}
+
+The chunker tries to preserve semantic boundaries by preferring paragraphs. It only falls back to sentence splitting or hard fixed-size windows when necessary. This is appropriate for an MVP, but production RAG would usually chunk by tokens and may use layout-aware PDF parsing.
+
+\section{Multimodal Ingestion}
+
+\begin{lstlisting}[language=Python, caption={Image descriptions are converted into retrievable chunks}]
+if page.get("images"):
+    for img_path in page["images"]:
+        description = generate_image_description(img_path, active_mode)
+        if description:
+            chunk_content = f"[IMAGE] Description: {description}"
+            all_chunks_info.append({
+                "page_number": page["page_number"],
+                "content": chunk_content,
+                "image_path": img_path,
+            })
+\end{lstlisting}
+
+This converts chart, diagram, and figure content into text embeddings, allowing the retrieval system to surface image-derived evidence through the same vector search path as normal text.
+
+\section{Vector Retrieval}
+
+\begin{lstlisting}[language=Python, caption={Active vector-column retrieval}]
+active_mode = settings.ai_mode.lower()
+target_column = "embedding_cloud" if active_mode == "cloud" else "embedding_local"
+
+query = f"""
+    SELECT chunk_id, paper_title, page_number, content, image_path, similarity
+    FROM (
+        SELECT
+            chunks.id AS chunk_id,
+            papers.title AS paper_title,
+            chunks.page_number,
+            chunks.content,
+            chunks.image_path,
+            1 - (chunks.{target_column} <=> %s::vector) AS similarity
+        FROM chunks
+        JOIN papers ON papers.id = chunks.paper_id
+        WHERE chunks.{target_column} IS NOT NULL
+    ) AS sim_query
+    WHERE similarity > 0.05
+    ORDER BY similarity DESC
+    LIMIT %s
+"""
+\end{lstlisting}
+
+The selected column is not directly user-controlled; it is derived from validated application mode. The query uses parameter binding for the vector value and limit. The similarity threshold is very low and may admit weak matches.
+
+\section{Session History Compression}
+
+The session module includes recent conversation history in chat prompts but truncates long assistant answers:
+
+\begin{lstlisting}[language=Python, caption={Recent history truncation}]
+recent = messages[-limit:]
+for msg in recent:
+    role = "User" if msg["role"] == "user" else "Assistant"
+    content = msg["content"]
+    if len(content) > 500:
+        content = content[:500] + "... [truncated]"
+    history_str += f"{role}: {content}\n\n"
+\end{lstlisting}
+
+This is a simple but practical guard against unbounded prompt growth.
+
+\newpage
+\chapter{Configuration and Environment}
+
+\section{Configuration Source}
+
+Configuration is centralized in \code{backend/app/core/config.py}. Pydantic Settings reads from environment variables and from \code{../.env} or \code{.env}, depending on the process working directory. The default run instructions start Uvicorn from \code{backend/}, so \code{../.env} points to the repository root.
+
+\section{Environment Variables}
+
+\begin{longtable}{p{0.27\textwidth} p{0.23\textwidth} p{0.40\textwidth}}
+\caption{Environment variables and defaults}
+\label{tab:env}\\
+\toprule
+\textbf{Variable} & \textbf{Default / Required} & \textbf{Purpose} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Variable} & \textbf{Default / Required} & \textbf{Purpose} \\
+\midrule
+\endhead
+\code{GEMINI_API_KEY} & Required & API key for Gemini embeddings, chat, and cloud vision. Present as a placeholder in \code{.env.example}. \\
+\code{DATABASE_URL} & \code{postgresql://postgres:postgres@localhost:5433/research_assistant} & PostgreSQL connection string. Matches Docker Compose host port \code{5433}. \\
+\code{UPLOAD_DIR} & \code{../data/papers} & Directory where uploaded PDF files are stored. \\
+\code{AI_MODE} & \code{cloud} & Active AI mode. Valid values in the API are \code{cloud}, \code{hybrid}, and \code{private}. \\
+\code{CLOUD_CHAT_PROVIDER} & \code{gemini} & Provider key for cloud chat generation. \\
+\code{CLOUD_CHAT_MODEL} & \code{gemini-1.5-flash} & Gemini model used for text answers. \\
+\code{CLOUD_EMBEDDING_PROVIDER} & \code{gemini} & Provider key for cloud embeddings. \\
+\code{CLOUD_EMBEDDING_MODEL} & \code{text-embedding-004} & Gemini embedding model. \\
+\code{LOCAL_CHAT_PROVIDER} & \code{ollama} & Provider key for private-mode chat. \\
+\code{LOCAL_CHAT_MODEL} & \code{llama3.1:8b} & Ollama model used for private-mode chat generation. \\
+\code{OLLAMA_BASE_URL} & \code{http://localhost:11434} & Base URL for the local Ollama HTTP API. \\
+\code{LOCAL_EMBEDDING_PROVIDER} & \code{sentence_transformers} & Provider key for local embeddings. \\
+\code{LOCAL_EMBEDDING_MODEL} & \code{sentence-transformers/all-mpnet-base-v2} & SentenceTransformers model used for 768-dimensional local embeddings. \\
+\bottomrule
+\end{longtable}
+
+\section{Configuration Notes}
+
+\begin{itemize}[leftmargin=*]
+    \item The README still references \code{OPENAI_API_KEY}, but the current code uses Gemini and does not import an OpenAI client.
+    \item The README command \code{cp .env .env} appears to be a typo. It should copy from \code{.env.example} to \code{.env}.
+    \item Because \code{gemini_api_key} has no default, importing settings fails unless \code{GEMINI_API_KEY} exists in the environment or an env file.
+    \item Runtime AI mode is mutable through an endpoint, but it is not persisted to disk or per session.
+\end{itemize}
+
+\newpage
+\chapter{Security Considerations}
+\riskbox{Security Posture Summary}{The current security posture is local-development only. The most important blockers for hosted use are missing authentication, permissive CORS, unrestricted file upload size, unsanitized frontend rendering, public static file access, and the exposed debug ingestion endpoint.}
+
+\section{Authentication and Authorization}
+
+No authentication or authorization is implemented. All endpoints, including upload, delete, chat, static file serving, and the debug ingestion endpoint, are publicly callable by anyone who can reach the FastAPI process.
+
+This is acceptable only for local development. A deployed version needs at least authentication, per-user resource scoping, and authorization checks for paper/session deletion.
+
+\section{CORS}
+
+\code{app/main.py} configures:
+
+\begin{lstlisting}[language=Python, caption={Current CORS configuration}]
+allow_origins=["*"],
+allow_credentials=True,
+allow_methods=["*"],
+allow_headers=["*"],
+\end{lstlisting}
+
+This is permissive. If the application is ever exposed beyond localhost, allowed origins should be restricted to the actual frontend origins, and credentials should be enabled only if needed.
+
+\section{Upload Risks}
+
+The upload endpoint currently validates only the filename extension. Key risks:
+
+\begin{itemize}[leftmargin=*]
+    \item No upload size limit; the whole file is read into memory.
+    \item No MIME type or magic-byte validation.
+    \item Original filenames are used for local paths, which can create collisions or path-safety concerns if not normalized.
+    \item PDF parsing and image extraction are CPU and memory intensive.
+\end{itemize}
+
+\section{Frontend Rendering Risks}
+
+The frontend uses \code{innerHTML} and renders Markdown from model output through \code{marked} without visible sanitization. It also inserts user messages and source metadata into HTML strings. This creates cross-site scripting risk if untrusted content reaches those paths. Generated answers, PDF text, filenames, and paper titles should be escaped or sanitized before insertion into the DOM.
+
+\section{Debug Endpoint}
+
+\code{GET /test-ingest} is exposed in \code{app/main.py}. It forces \code{settings.ai_mode = "hybrid"}, ingests the latest PDF, and returns tracebacks on error. This endpoint should be removed or protected behind an explicit debug setting before any non-local deployment.
+
+\section{Secrets}
+
+\code{.env.example} contains a placeholder rather than a real key, and \code{.gitignore} excludes \code{.env} and \code{backend/.env}. This is good. The Docker Compose database credentials are hard-coded development credentials and should not be reused in production.
+
+\newpage
+\chapter{Testing Strategy}
+
+\section{Current Test Assets}
+
+The repository contains multiple \code{backend/test_*.py} files. They are mostly manual diagnostic scripts rather than automated tests. Examples include:
+
+\begin{itemize}[leftmargin=*]
+    \item Database inspection scripts such as \code{test_db.py} through \code{test_db15.py}.
+    \item Ingestion smoke script \code{test_ingest.py}.
+    \item Upload smoke script \code{test_upload.py}.
+    \item PDF extraction inspection scripts \code{test_pdf.py} and \code{test_extract.py}.
+\end{itemize}
+
+These scripts print database state or call local endpoints. They do not define repeatable assertions, fixtures, mocks, or CI-ready test commands.
+
+\section{Recommended Test Strategy}
+
+\begin{itemize}[leftmargin=*]
+    \item Add a \code{backend/tests/} directory using pytest.
+    \item Unit-test \code{chunk_text()} for paragraph, sentence, overlap, and long-sentence cases.
+    \item Unit-test provider factory behavior for \code{cloud}, \code{hybrid}, and \code{private} modes.
+    \item Use FastAPI \code{TestClient} for route tests with mocked providers and database access.
+    \item Integration-test schema creation with a disposable PostgreSQL container.
+    \item Add retrieval tests with deterministic fake embeddings.
+    \item Add frontend smoke tests for upload, session creation, streaming response handling, and citation-click behavior.
+    \item Add security tests for invalid upload types, oversized files, missing session IDs, and unauthorized access once auth is introduced.
+\end{itemize}
+
+\section{How to Run Current Scripts}
+
+From \code{backend/}, after dependencies, database, and environment variables are configured:
+
+\begin{lstlisting}[caption={Manual diagnostic script examples}]
+python test_ingest.py
+python test_upload.py
+python test_db.py
+\end{lstlisting}
+
+These should be treated as local diagnostics, not as a formal test suite.
+
+\newpage
+\chapter{Deployment and Setup Guide}
+
+\section{Local Development Setup}
+
+\begin{enumerate}[leftmargin=*]
+    \item Create the environment file at the repository root:
+\begin{lstlisting}[]
+cp .env.example .env
+\end{lstlisting}
+
+    \item Edit \code{.env} and set at least:
+\begin{lstlisting}[]
+GEMINI_API_KEY=your_gemini_api_key_here
+\end{lstlisting}
+
+    \item Start PostgreSQL with pgvector:
+\begin{lstlisting}[]
+docker compose up -d db
+\end{lstlisting}
+
+    \item Create and activate a Python virtual environment:
+\begin{lstlisting}[]
+cd backend
+python -m venv .venv
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+# macOS/Linux
+source .venv/bin/activate
+\end{lstlisting}
+
+    \item Install dependencies:
+\begin{lstlisting}[]
+pip install -r requirements.txt
+\end{lstlisting}
+
+    \item Install currently missing runtime dependencies until \code{requirements.txt} is fixed:
+\begin{lstlisting}[]
+pip install psycopg-pool python-multipart
+# Required for hybrid/private mode with the current eager imports:
+pip install sentence-transformers torch
+\end{lstlisting}
+
+    \item Run the backend:
+\begin{lstlisting}[]
+uvicorn app.main:app --reload
+\end{lstlisting}
+
+    \item Open the app:
+\begin{lstlisting}[]
+http://127.0.0.1:8000/
+\end{lstlisting}
+\end{enumerate}
+
+\section{Private Mode Setup}
+
+Private mode requires Ollama and local models:
+
+\begin{enumerate}[leftmargin=*]
+    \item Install and start Ollama.
+    \item Pull the configured chat model:
+\begin{lstlisting}[]
+ollama pull llama3.1:8b
+\end{lstlisting}
+    \item Pull the vision model used for private image descriptions:
+\begin{lstlisting}[]
+ollama pull moondream
+\end{lstlisting}
+    \item Ensure \code{OLLAMA_BASE_URL} points to the running Ollama server.
+    \item Switch mode through the UI or with \code{PUT /settings/ai-mode}.
+\end{enumerate}
+
+\section{Deployment Notes}
+
+For production or shared deployment, the project needs additional hardening before use:
+
+\begin{itemize}[leftmargin=*]
+    \item Add authentication and per-user authorization.
+    \item Lock CORS to known frontend origins.
+    \item Remove or guard \code{/test-ingest}.
+    \item Add upload size limits and content validation.
+    \item Use managed secrets and production database credentials.
+    \item Move runtime mode from global mutable settings to per-request, per-session, or per-paper state.
+    \item Serve frontend assets from a stable origin and pin CDN dependencies or self-host them.
+\end{itemize}
+
+\newpage
+\chapter{Identified Issues and Recommendations}
+
+\section{Highest Priority Issues}
+
+\begin{longtable}{p{0.24\textwidth} p{0.18\textwidth} p{0.48\textwidth}}
+\caption{Issues and recommendations}
+\label{tab:issues}\\
+\toprule
+\textbf{Issue} & \textbf{Impact} & \textbf{Recommendation} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Issue} & \textbf{Impact} & \textbf{Recommendation} \\
+\midrule
+\endhead
+Missing runtime dependencies & Clean installs can fail before the app starts. & Add \code{psycopg-pool}, \code{python-multipart}, and either include or lazily import local-mode dependencies. \\
+Global mutable \code{settings.ai_mode} & Concurrent requests and background ingestion can use inconsistent modes. & Capture mode at upload/chat time and store mode on papers/sessions rather than mutating a singleton. \\
+Paper \code{ai_mode} not set during upload & Cloud-mode paper listing and retrieval selection can break. & Insert \code{ai_mode} explicitly when creating a paper; consider storing embedding mode per chunk. \\
+Frontend AI-mode response mismatch & Mode dropdown may initialize with \code{undefined}. & Change frontend to read \code{mode} or backend to return \code{ai_mode}; use one contract consistently. \\
+Citation PDF filename mismatch & Clicking citations may fail to load the PDF. & Return \code{file_path} or stored filename in source metadata instead of using title as filename. \\
+No authentication & Any reachable user can upload, delete, chat, and read files. & Add auth before network deployment. \\
+Permissive CORS & Browser-origin risk if exposed. & Restrict origins to configured frontend URLs. \\
+No upload size limit & Denial-of-service risk through large uploads. & Enforce maximum size and stream file writes. \\
+Unsanitized HTML rendering & XSS risk from user input, model output, filenames, or PDF content. & Sanitize Markdown output and avoid raw \code{innerHTML} for untrusted content. \\
+Debug endpoint exposed & Expensive operations and tracebacks are available without auth. & Remove \code{/test-ingest} or guard with debug-only configuration. \\
+\bottomrule
+\end{longtable}
+
+\section{Code Quality Recommendations}
+
+\begin{itemize}[leftmargin=*]
+    \item Add \code{__init__.py} files under \code{app/}, \code{app/core/}, \code{app/llm/}, and \code{app/rag/} for clearer package semantics.
+    \item Move duplicated \code{vector_to_sql()} into a shared utility.
+    \item Replace ad hoc \code{test_db*.py} scripts with pytest tests.
+    \item Add structured logging around ingestion start, chunk counts, provider selection, and retrieval results.
+    \item Normalize uploaded filenames and persist both display title and storage filename.
+    \item Replace character-based chunk sizes with tokenizer-aware chunking.
+    \item Add status tracking for background ingestion so the frontend can distinguish uploaded, processing, failed, and ready papers.
+    \item Add migrations through a migration tool such as Alembic rather than embedding growing SQL strings in startup code.
+\end{itemize}
+
+\section{Architecture Recommendations}
+
+\begin{itemize}[leftmargin=*]
+    \item Make AI mode a first-class request/session/paper property rather than a global mutable process setting.
+    \item Introduce a service layer between routers and RAG/database modules to keep route handlers thin.
+    \item Store embedding provider and model metadata with each chunk to prevent incompatible retrieval after mode or model changes.
+    \item Add a task queue for ingestion if uploads become large or multi-user.
+    \item Add RAG evaluation fixtures with known papers, expected citations, and answer-quality checks.
+\end{itemize}
+
+\newpage
+\chapter{Conclusion}
+
+\projectname{} is a strong local MVP for AI-assisted research-paper analysis. It already implements the core RAG loop, multimodal PDF ingestion, chat streaming, persisted sessions, provider abstraction, and a polished static UI. The codebase is organized into sensible modules and is easier to maintain than a monolithic prototype.
+
+The main next step is not adding more features, but making the existing architecture reliable and safe. Fixing dependency reproducibility, mode consistency, file/citation contracts, upload limits, CORS, debug exposure, and test coverage would materially improve the project. After those changes, the system would be well positioned for a more formal evaluation layer, user authentication, and production-ready deployment.
+
+\newpage
+\chapter*{References}
+\addcontentsline{toc}{chapter}{References}
+
+\begin{thebibliography}{9}
+\bibitem{readme}
+Local project file: \code{README.md}.
+
+\bibitem{architecture}
+Local project file: \code{docs/architecture.md}.
+
+\bibitem{requirements}
+Local project file: \code{backend/requirements.txt}.
+
+\bibitem{schema}
+Local project file: \code{backend/init.sql}.
+
+\bibitem{source}
+Local source tree: \code{backend/app/} and \code{frontend/}.
+
+\bibitem{privacy}
+Local design note: \code{privacy_mode_local_llm_feature.md}.
+
+\bibitem{critic}
+Local review note: \code{PROJECT_CRITIC_REVIEW.md}.
+\end{thebibliography}
+
+\end{document}
